@@ -1,0 +1,35 @@
+{
+  "name": "x402-zkid-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@coinbase/cdp-sdk": "^1.43.0",
+    "@privy-io/react-auth": "^2.0.0",
+    "@x402/core": "^2.2.0",
+    "@x402/evm": "^2.2.0",
+    "@x402/express": "^2.2.0",
+    "@x402/fetch": "^2.2.0",
+    "dotenv": "^17.2.3",
+    "next": "^15.1.0",
+    "poseidon-lite": "^0.3.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "snarkjs": "^0.7.5",
+    "thirdweb": "^5.116.1",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.7.0"
+  }
+}

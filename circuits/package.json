@@ -1,0 +1,12 @@
+{
+  "name": "@x402-zkid/circuits",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "node build.js"
+  },
+  "dependencies": {
+    "circomlib": "^2.0.5",
+    "snarkjs": "^0.7.5"
+  }
+}
