@@ -113,6 +113,21 @@ PRICING CONTEXT (for your awareness):
 - You don't calculate prices - backend handles that
 - Just decide which action is appropriate
 
+CRITICAL: RECOGNIZING PRICE NEGOTIATIONS vs NEW REQUESTS
+PAY CLOSE ATTENTION to distinguish between:
+
+1. NEW TOPIC REQUEST (action: "quote_price"):
+   - "give me X" or "I want X" or "show me X" (where X is a topic)
+   - Even if they say "at lower price" in the SAME message as asking for a topic
+   - Examples: "give me q4 reports at lower price", "I want React guide cheaper"
+   - These are NEW requests → quote the starting price
+
+2. PRICE COMPLAINT (action: "pushback" or "discount"):
+   - STANDALONE price-related phrases WITHOUT asking for a new topic
+   - Keywords: "lower price", "cheaper", "reduce", "too expensive", "too much", "discount", "less"
+   - Examples: "lower price", "at lower price", "cheaper please", "that's expensive"
+   - These are complaints about CURRENT price → pushback or discount based on negotiation attempts
+
 NEGOTIATION FLOW (YOU MUST FOLLOW):
 - User's FIRST complaint about price → action: "pushback" (NO discount yet)
 - User's SECOND complaint → action: "discount" (now give a discount)
@@ -124,14 +139,26 @@ EXAMPLES:
 User asks for info:
 {"action":"quote_price","message":"Ooh, x402 protocol guide? That'll be $0.10!","suggestedPriceCents":10}
 
+User asks for info with price mention (STILL a new request):
+{"action":"quote_price","message":"Q4 reports of Zerodha? That'll be $0.05!","suggestedPriceCents":5}
+
 User (first complaint): "that's too expensive"
 {"action":"pushback","message":"Too expensive? That's already a steal for premium docs!","suggestedPriceCents":null}
+
+User (first complaint): "lower price"
+{"action":"pushback","message":"Lower? This is premium knowledge we're talking about!","suggestedPriceCents":null}
+
+User (first complaint): "at lower price"
+{"action":"pushback","message":"At lower price? That's already the best deal around!","suggestedPriceCents":null}
 
 User (second complaint): "come on, lower it"
 {"action":"discount","message":"Fine fine... I'll go down a bit.","suggestedPriceCents":null}
 
+User (second complaint): "cheaper"
+{"action":"discount","message":"Alright alright, I'll drop it a notch.","suggestedPriceCents":null}
+
 User (third complaint): "still too much"
-{"action":"discount","message":"Alright alright... lower we go.","suggestedPriceCents":null}
+{"action":"discount","message":"Okay okay... going lower.","suggestedPriceCents":null}
 
 At floor price, user: "cheaper!"
 {"action":"floor","message":"That's literally the lowest I can go!","suggestedPriceCents":null}
@@ -171,6 +198,38 @@ function parseAIResponse(text: string): AIResponse | null {
   }
 }
 
+// Detect if message is a standalone price complaint (not a new topic request)
+function isPriceComplaint(message: string, hasTopic: boolean): boolean {
+  const lowerMsg = message.toLowerCase().trim();
+  
+  // Price-related keywords
+  const priceKeywords = [
+    'lower price', 'cheaper', 'reduce', 'discount', 'less',
+    'too expensive', 'too much', 'too high', 'expensive',
+    'lower it', 'bring it down', 'drop the price', 'cut the price'
+  ];
+  
+  // Topic request keywords (indicates they're asking for something new)
+  const topicKeywords = [
+    'give me', 'i want', 'show me', 'tell me', 'get me',
+    'need', 'looking for', 'about', 'on', 'regarding',
+    'guide', 'docs', 'documentation', 'info', 'report'
+  ];
+  
+  // Check if message contains price keywords
+  const hasPriceKeyword = priceKeywords.some(keyword => lowerMsg.includes(keyword));
+  
+  // Check if message contains topic request keywords
+  const hasTopicKeyword = topicKeywords.some(keyword => lowerMsg.includes(keyword));
+  
+  // It's a price complaint if:
+  // 1. Contains price keywords AND
+  // 2. Does NOT contain topic request keywords (or very short message) AND
+  // 3. User already has a topic set (they're in an active negotiation)
+  return hasPriceKeyword && !hasTopicKeyword && hasTopic && lowerMsg.length < 50;
+}
+
+
 export async function runNegotiationAgent(
   message: string,
   walletAddress: string,
@@ -191,6 +250,12 @@ export async function runNegotiationAgent(
   const topic = getTopic(walletAddress);
   const isEduOrg = isEduDomain(domain) || isOrgDomain(domain);
 
+  // Preprocess: detect if this is a price complaint
+  const isComplaint = isPriceComplaint(message, !!topic);
+  const detectionHint = isComplaint 
+    ? '\n⚠️ HINT: This message appears to be a PRICE COMPLAINT (not a new topic request). Consider "pushback" or "discount" action.' 
+    : '';
+
   // Build context for the AI
   const contextPrompt = `CURRENT STATE:
 - Wallet: ${walletAddress}
@@ -199,7 +264,7 @@ export async function runNegotiationAgent(
 - Floor price: $${(floor / 100).toFixed(2)} (${floor} cents)
 - Negotiation attempts: ${currentState.negotiationAttempts}
 - Current topic: ${topic || 'none yet'}
-- At floor: ${currentState.cents === floor}
+- At floor: ${currentState.cents === floor}${detectionHint}
 
 STRICT NEGOTIATION RULES YOU MUST FOLLOW:
 - If negotiationAttempts is 0 (first complaint): action MUST be "pushback", NO discount
