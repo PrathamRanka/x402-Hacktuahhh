@@ -225,7 +225,7 @@ Respond with ONLY valid JSON following the exact format specified in your instru
   if (!aiResponse) {
     // Fallback if parsing fails
     return {
-      response: "Oops, I got confused there! What can I help you with?",
+      response: "I sell premium guides, not free answers 😉 What topic do you want?",
       currentPrice: {
         cents: currentState.cents,
         dollars: (currentState.cents / 100).toFixed(2)
