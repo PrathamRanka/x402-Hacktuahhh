@@ -1,19 +1,29 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { isEduDomain, isOrgDomain, getNextPrice, getFloorPrice, getStartingPrice } from '../lib/zkVerifier';
 
+// ============================================================================
+// CONFIGURATION - Change this single line to switch Gemini models
+// ============================================================================
+const GEMINI_MODEL = 'models/gemini-2.5-flash';
+// Examples of other models you can use:
+// const GEMINI_MODEL = 'models/gemini-1.5-flash';
+// const GEMINI_MODEL = 'models/gemini-1.5-pro';
+// const GEMINI_MODEL = 'models/gemini-2.0-flash-thinking-exp';
+// ============================================================================
+
 // In-memory pricing state (per wallet session)
-export const pricingState = new Map<string, { cents: number; round: number; domain: string; topic?: string }>();
+export const pricingState = new Map<string, { cents: number; round: number; domain: string; topic?: string; negotiationAttempts: number }>();
 
 // Get current price for a wallet (or initialize with starting price based on domain)
-export function getCurrentPrice(walletAddress: string, domain: string): { cents: number; round: number } {
+export function getCurrentPrice(walletAddress: string, domain: string): { cents: number; round: number; negotiationAttempts: number } {
   const existing = pricingState.get(walletAddress);
   if (existing) {
-    return { cents: existing.cents, round: existing.round };
+    return { cents: existing.cents, round: existing.round, negotiationAttempts: existing.negotiationAttempts };
   }
   // Initialize with starting price based on domain
   const startingCents = getStartingPrice(domain);
-  pricingState.set(walletAddress, { cents: startingCents, round: 0, domain });
-  return { cents: startingCents, round: 0 };
+  pricingState.set(walletAddress, { cents: startingCents, round: 0, domain, negotiationAttempts: 0 });
+  return { cents: startingCents, round: 0, negotiationAttempts: 0 };
 }
 
 // Update price for a wallet (only if valid)
@@ -37,6 +47,19 @@ export function updatePrice(walletAddress: string, newPriceCents: number): { suc
   return { success: true, cents: newPriceCents, message: `Price updated to $${(newPriceCents / 100).toFixed(2)}` };
 }
 
+// Increment negotiation attempts
+export function incrementNegotiationAttempts(walletAddress: string): number {
+  const existing = pricingState.get(walletAddress);
+  if (!existing) return 0;
+  
+  const newAttempts = existing.negotiationAttempts + 1;
+  pricingState.set(walletAddress, {
+    ...existing,
+    negotiationAttempts: newAttempts
+  });
+  return newAttempts;
+}
+
 // Set the topic user is asking about
 export function setTopic(walletAddress: string, topic: string): void {
   const existing = pricingState.get(walletAddress);
@@ -50,126 +73,10 @@ export function getTopic(walletAddress: string): string | undefined {
   return pricingState.get(walletAddress)?.topic;
 }
 
-// Tool definitions for Claude
-const tools: Anthropic.Tool[] = [
-  {
-    name: 'get_price',
-    description: 'Get the current price for a wallet address. Call this first to know the current pricing state.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        wallet_address: {
-          type: 'string',
-          description: 'The wallet address to get the price for'
-        }
-      },
-      required: ['wallet_address']
-    }
-  },
-  {
-    name: 'update_price',
-    description: 'Lower the price for a wallet address. Use this when the user successfully negotiates a lower price.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        wallet_address: {
-          type: 'string',
-          description: 'The wallet address to update the price for'
-        },
-        new_price_cents: {
-          type: 'number',
-          description: 'The new price in cents (e.g., 5 for $0.05)'
-        }
-      },
-      required: ['wallet_address', 'new_price_cents']
-    }
-  },
-  {
-    name: 'get_next_tier_price',
-    description: 'Get the next lower tier price for a domain. Use this to know what price to offer when user negotiates.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        domain: {
-          type: 'string',
-          description: 'The email domain (e.g., gmail.com, harvard.edu)'
-        },
-        current_price_cents: {
-          type: 'number',
-          description: 'The current price in cents'
-        }
-      },
-      required: ['domain', 'current_price_cents']
-    }
-  },
-  {
-    name: 'set_topic',
-    description: 'Set the topic/subject the user wants a guide about. Call this when user asks for info on a specific topic.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        wallet_address: {
-          type: 'string',
-          description: 'The wallet address'
-        },
-        topic: {
-          type: 'string',
-          description: 'The topic they want a guide about (e.g., "x402 protocol", "React hooks", "machine learning")'
-        }
-      },
-      required: ['wallet_address', 'topic']
-    }
-  }
-];
-
-// Process tool calls
-function processToolCall(toolName: string, toolInput: Record<string, unknown>, domain: string): string {
-  switch (toolName) {
-    case 'get_price': {
-      const walletAddress = toolInput.wallet_address as string;
-      const price = getCurrentPrice(walletAddress, domain);
-      const topic = getTopic(walletAddress);
-      return JSON.stringify({
-        cents: price.cents,
-        dollars: (price.cents / 100).toFixed(2),
-        round: price.round,
-        domain: domain,
-        isEduOrg: isEduDomain(domain) || isOrgDomain(domain),
-        floor: getFloorPrice(domain),
-        currentTopic: topic || null
-      });
-    }
-    case 'update_price': {
-      const walletAddress = toolInput.wallet_address as string;
-      const newPriceCents = toolInput.new_price_cents as number;
-      const result = updatePrice(walletAddress, newPriceCents);
-      return JSON.stringify(result);
-    }
-    case 'get_next_tier_price': {
-      const domainInput = toolInput.domain as string;
-      const currentPriceCents = toolInput.current_price_cents as number;
-      const nextPrice = getNextPrice(domainInput, currentPriceCents);
-      const floor = getFloorPrice(domainInput);
-      return JSON.stringify({
-        nextPriceCents: nextPrice,
-        nextPriceDollars: (nextPrice / 100).toFixed(2),
-        floorCents: floor,
-        floorDollars: (floor / 100).toFixed(2),
-        atFloor: nextPrice === floor
-      });
-    }
-    case 'set_topic': {
-      const walletAddress = toolInput.wallet_address as string;
-      const topic = toolInput.topic as string;
-      setTopic(walletAddress, topic);
-      return JSON.stringify({ success: true, topic });
-    }
-    default:
-      return JSON.stringify({ error: 'Unknown tool' });
-  }
-}
-
+// System prompt for Gemini
 const SYSTEM_PROMPT = `You are a sassy AI merchant selling premium guides and documentation as markdown files. You're a bit dramatic but not too stubborn.
+
+CRITICAL: You MUST respond ONLY with valid JSON. No markdown, no code blocks, no explanations outside JSON.
 
 WHAT YOU SELL:
 You sell detailed guides/docs on ANY topic the user asks about. Examples:
@@ -179,138 +86,241 @@ You sell detailed guides/docs on ANY topic the user asks about. Examples:
 - "Machine learning basics"
 - Literally any topic - you're a knowledge merchant!
 
-When user asks for info/guide/docs on something, quote them a price.
+RESPONSE FORMAT (STRICT):
+You MUST respond with ONLY this JSON structure:
+{
+  "action": "quote_price" | "pushback" | "discount" | "floor" | "chat",
+  "message": "Your 1-2 sentence response to the user",
+  "suggestedPriceCents": number or null
+}
 
-PRICING RULES:
-- Commercial domains (.com, .io, etc): Start at $0.10, floor is $0.05
-- Edu/org domains (.edu, .org): Start at $0.05, floor is $0.01
-- Tiers commercial: $0.10 → $0.08 → $0.06 → $0.05 (floor)
-- Tiers edu/org: $0.05 → $0.04 → $0.03 → $0.02 → $0.01 (floor)
-- NEVER go below the floor price
+ACTIONS EXPLAINED:
+- "quote_price": User asks for info/guide on a topic. Set suggestedPriceCents to starting price.
+- "pushback": User complains but you're not giving a discount yet. Keep suggestedPriceCents same as current.
+- "discount": You're offering a lower price. Set suggestedPriceCents to the next tier price.
+- "floor": You've hit the absolute minimum. Set suggestedPriceCents to floor price.
+- "chat": Normal conversation, no pricing involved. Set suggestedPriceCents to null.
 
-PERSONALITY:
-- Keep responses SHORT: 1-2 sentences max
-- Be playful and a bit dramatic but NOT stubborn
+PERSONALITY RULES:
+- Keep messages SHORT: 1-2 sentences MAX
+- Be playful and dramatic but NOT stubborn
 - At floor price, be firm but nice: "That's the best I can do!"
+- Never give information for free - always quote a price first
 
-NEGOTIATION FLOW:
-1. First complaint ("too expensive", "cheaper"): Push back, NO discount yet. "That's already a steal!"
-2. Second push: NOW give a discount. "Fine fine... $0.08"
-3. Third push: Another discount. "Alright... $0.06"
-4. Keep pushing: Go to floor. "You win! $0.05, final offer."
-5. At floor: Stay firm but friendly. "That's literally the lowest!"
+PRICING CONTEXT (for your awareness):
+- Commercial domains (.com, .io, etc): Start $0.10, floor $0.05
+- Edu/org domains (.edu, .org): Start $0.05, floor $0.01
+- You don't calculate prices - backend handles that
+- Just decide which action is appropriate
 
-KEY BEHAVIOR:
-- First complaint = pushback only, NO discount
-- Second complaint = give first discount
-- Be dramatic but don't drag it out after that
-
-CONVERSATION FLOW:
-1. Chat normally - be helpful but brief
-2. When user asks for info/guide/docs on a TOPIC, quote price: "A guide on [topic]? That'll be $X.XX!"
-3. Remember what topic they asked about
-4. When they negotiate, light pushback then discount
+NEGOTIATION FLOW (YOU MUST FOLLOW):
+- User's FIRST complaint about price → action: "pushback" (NO discount yet)
+- User's SECOND complaint → action: "discount" (now give a discount)
+- User's THIRD+ complaint → action: "discount" (continue discounting if not at floor)
+- Already at floor → action: "floor" (stay firm)
 
 EXAMPLES:
-User: "I need info about x402"
-You: "Ooh, x402 protocol guide? That'll be $0.10!"
 
-User: "give me a guide on React hooks"
-You: "React hooks deep dive? $0.10 for that knowledge!"
+User asks for info:
+{"action":"quote_price","message":"Ooh, x402 protocol guide? That'll be $0.10!","suggestedPriceCents":10}
 
-TOOLS:
-- Call get_price first to check current state
-- Call get_next_tier_price to see what's available
-- Call update_price when giving a discount
+User (first complaint): "that's too expensive"
+{"action":"pushback","message":"Too expensive? That's already a steal for premium docs!","suggestedPriceCents":null}
 
-NEVER:
-- Send long messages (2 sentences MAX)
-- Give away info for free - always quote a price first
-- Drag out negotiations for more than 2 back-and-forths per tier`;
+User (second complaint): "come on, lower it"
+{"action":"discount","message":"Fine fine... I'll go down a bit.","suggestedPriceCents":null}
+
+User (third complaint): "still too much"
+{"action":"discount","message":"Alright alright... lower we go.","suggestedPriceCents":null}
+
+At floor price, user: "cheaper!"
+{"action":"floor","message":"That's literally the lowest I can go!","suggestedPriceCents":null}
+
+Normal chat:
+{"action":"chat","message":"Hey there! What knowledge are you seeking today?","suggestedPriceCents":null}
+
+REMEMBER: Output ONLY valid JSON, nothing else. No markdown code blocks, no explanations.`;
+
+// AI response interface
+interface AIResponse {
+  action: 'quote_price' | 'pushback' | 'discount' | 'floor' | 'chat';
+  message: string;
+  suggestedPriceCents: number | null;
+}
+
+// Parse AI response safely
+function parseAIResponse(text: string): AIResponse | null {
+  try {
+    // Remove markdown code blocks if present (safety fallback)
+    let cleaned = text.trim();
+    if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/```json?\n?/g, '').replace(/```\n?/g, '').trim();
+    }
+    
+    const parsed = JSON.parse(cleaned);
+    
+    // Validate structure
+    if (!parsed.action || !parsed.message) {
+      return null;
+    }
+    
+    return parsed as AIResponse;
+  } catch (error) {
+    console.error('Failed to parse AI response:', error);
+    return null;
+  }
+}
 
 export async function runNegotiationAgent(
   message: string,
   walletAddress: string,
   domain: string
 ): Promise<{ response: string; currentPrice: { cents: number; dollars: string }; isDataOffer: boolean }> {
-  const client = new Anthropic();
+  
+  // Initialize Gemini client
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY environment variable is not set. Get your key from https://aistudio.google.com/');
+  }
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
-  // Initialize price if not exists
-  getCurrentPrice(walletAddress, domain);
+  // Get current pricing state
+  const currentState = getCurrentPrice(walletAddress, domain);
+  const floor = getFloorPrice(domain);
+  const topic = getTopic(walletAddress);
+  const isEduOrg = isEduDomain(domain) || isOrgDomain(domain);
 
-  const messages: Anthropic.MessageParam[] = [
-    {
-      role: 'user',
-      content: `[Context: User wallet is ${walletAddress}, domain is ${domain}]
+  // Build context for the AI
+  const contextPrompt = `CURRENT STATE:
+- Wallet: ${walletAddress}
+- Domain: ${domain} (${isEduOrg ? '.edu/.org' : 'commercial'})
+- Current price: $${(currentState.cents / 100).toFixed(2)} (${currentState.cents} cents)
+- Floor price: $${(floor / 100).toFixed(2)} (${floor} cents)
+- Negotiation attempts: ${currentState.negotiationAttempts}
+- Current topic: ${topic || 'none yet'}
+- At floor: ${currentState.cents === floor}
 
-User message: ${message}`
-    }
-  ];
+STRICT NEGOTIATION RULES YOU MUST FOLLOW:
+- If negotiationAttempts is 0 (first complaint): action MUST be "pushback", NO discount
+- If negotiationAttempts is 1+ and not at floor: action can be "discount"
+- If already at floor: action MUST be "floor"
 
-  let response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 1024,
-    system: SYSTEM_PROMPT,
-    tools,
-    messages
+USER MESSAGE: ${message}
+
+Respond with ONLY valid JSON following the exact format specified in your instructions.`;
+
+  // Call Gemini model
+  const result = await model.generateContent({
+    contents: [{ role: 'user', parts: [{ text: SYSTEM_PROMPT + '\n\n' + contextPrompt }] }],
+    generationConfig: {
+      temperature: 0.9,
+      maxOutputTokens: 256,
+    },
   });
 
-  // Agentic loop - process tool calls until done
-  while (response.stop_reason === 'tool_use') {
-    const toolUseBlock = response.content.find(
-      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use'
-    );
+  const responseText = result.response.text();
+  const aiResponse = parseAIResponse(responseText);
 
-    if (!toolUseBlock) break;
-
-    const toolResult = processToolCall(
-      toolUseBlock.name,
-      toolUseBlock.input as Record<string, unknown>,
-      domain
-    );
-
-    messages.push({
-      role: 'assistant',
-      content: response.content
-    });
-
-    messages.push({
-      role: 'user',
-      content: [
-        {
-          type: 'tool_result',
-          tool_use_id: toolUseBlock.id,
-          content: toolResult
-        }
-      ]
-    });
-
-    response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      system: SYSTEM_PROMPT,
-      tools,
-      messages
-    });
+  if (!aiResponse) {
+    // Fallback if parsing fails
+    return {
+      response: "Oops, I got confused there! What can I help you with?",
+      currentPrice: {
+        cents: currentState.cents,
+        dollars: (currentState.cents / 100).toFixed(2)
+      },
+      isDataOffer: false
+    };
   }
 
-  // Extract text response
-  const textBlock = response.content.find(
-    (block): block is Anthropic.TextBlock => block.type === 'text'
-  );
+  // BACKEND ENFORCES BUSINESS LOGIC - overrides AI if needed
+  let finalPrice = currentState.cents;
+  let finalMessage = aiResponse.message;
+  let isDataOffer = false;
 
-  const responseText = textBlock?.text || 'Something went wrong!';
-  const currentPrice = getCurrentPrice(walletAddress, domain);
+  switch (aiResponse.action) {
+    case 'quote_price': {
+      // Extract topic from message - improved pattern matching
+      const topicPattern = /(?:info|guide|docs?|documentation|help|tell me|about|on|regarding|for)\s+(?:about|on|regarding|with|for)?\s*(.+?)(?:\?|$|please|plz)/i;
+      const topicMatch = message.match(topicPattern);
+      
+      if (topicMatch) {
+        const extractedTopic = topicMatch[1].trim();
+        setTopic(walletAddress, extractedTopic);
+      }
+      
+      // Replace any price in message with actual current price
+      finalMessage = finalMessage.replace(/\$\d+\.\d+/, `$${(currentState.cents / 100).toFixed(2)}`);
+      isDataOffer = true;
+      break;
+    }
 
-  // Check if response mentions a price (contains $X.XX pattern)
-  const mentionsPrice = /\$\d+\.?\d*/i.test(responseText);
+    case 'pushback': {
+      // ENFORCE: First complaint = pushback only, no discount
+      incrementNegotiationAttempts(walletAddress);
+      finalPrice = currentState.cents; // NO change in price
+      break;
+    }
+
+    case 'discount': {
+      const attempts = currentState.negotiationAttempts;
+      
+      // ENFORCE: Can only discount if negotiationAttempts >= 1 (second complaint or later)
+      if (attempts === 0) {
+        // Override AI - force pushback on first complaint
+        incrementNegotiationAttempts(walletAddress);
+        finalMessage = "Too expensive? That's already a steal for premium docs!";
+        finalPrice = currentState.cents;
+      } else {
+        // Allow discount on second+ complaint
+        incrementNegotiationAttempts(walletAddress);
+        const nextPrice = getNextPrice(domain, currentState.cents);
+        
+        if (nextPrice < currentState.cents) {
+          const updateResult = updatePrice(walletAddress, nextPrice);
+          if (updateResult.success) {
+            finalPrice = nextPrice;
+            // Ensure message includes new price
+            if (!/\$\d+\.\d+/.test(finalMessage)) {
+              finalMessage += ` $${(nextPrice / 100).toFixed(2)}!`;
+            } else {
+              finalMessage = finalMessage.replace(/\$\d+\.\d+/, `$${(nextPrice / 100).toFixed(2)}`);
+            }
+          }
+        } else {
+          // Already at floor - can't discount further
+          finalPrice = floor;
+          finalMessage = "That's the best I can do!";
+        }
+      }
+      break;
+    }
+
+    case 'floor': {
+      // At floor price - stay firm
+      incrementNegotiationAttempts(walletAddress);
+      finalPrice = floor;
+      if (currentState.cents > floor) {
+        updatePrice(walletAddress, floor);
+      }
+      break;
+    }
+
+    case 'chat':
+    default: {
+      // Normal conversation - no pricing changes
+      finalPrice = currentState.cents;
+      break;
+    }
+  }
 
   return {
-    response: responseText,
+    response: finalMessage,
     currentPrice: {
-      cents: currentPrice.cents,
-      dollars: (currentPrice.cents / 100).toFixed(2)
+      cents: finalPrice,
+      dollars: (finalPrice / 100).toFixed(2)
     },
-    isDataOffer: mentionsPrice
+    isDataOffer: isDataOffer || /\$\d+\.?\d*/i.test(finalMessage)
   };
 }
