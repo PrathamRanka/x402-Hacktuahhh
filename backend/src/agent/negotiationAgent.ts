@@ -4,7 +4,7 @@ import { isEduDomain, isOrgDomain, getNextPrice, getFloorPrice, getStartingPrice
 // ============================================================================
 // CONFIGURATION - Change this single line to switch Gemini models
 // ============================================================================
-const GEMINI_MODEL = 'models/gemini-2.5-flash-lite';
+const GEMINI_MODEL = 'models/gemini-2.5-flash';
 // Examples of other models you can use:
 // const GEMINI_MODEL = 'models/gemini-1.5-flash';
 // const GEMINI_MODEL = 'models/gemini-1.5-pro';
