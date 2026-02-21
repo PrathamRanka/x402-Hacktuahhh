@@ -3,7 +3,7 @@
 import { usePrivy, useWallets } from '@privy-io/react-auth'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { generateZKProof, verifyZKProof, ProofData } from '@/lib/zkproof'
-import { sendChatStream, unlockData, getCurrentPrice as fetchPriceFromBackend } from '@/lib/api'
+import { sendChatStream, unlockData, getCurrentPrice as fetchPriceFromBackend, storeZkProof } from '@/lib/api'
 import { makePaymentRequest } from '@/lib/x402client'
 import { getBalances, Balances, FAUCETS } from '@/lib/balance'
 import ReactMarkdown from 'react-markdown'
@@ -138,30 +138,15 @@ export default function Home() {
       // Store proof in MongoDB Atlas (always try to store, even if verification fails for now)
       try {
         console.log('Attempting to store proof in MongoDB...')
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/zkid/proofs`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            walletAddress: proof.walletAddress,
-            domain: proof.domain,
-            method: proof.method,
-            generatedAt: proof.generatedAt,
-            proof: proof.proof,
-            publicSignals: proof.publicSignals,
-          }),
+        const result = await storeZkProof({
+          walletAddress: proof.walletAddress,
+          domain: proof.domain,
+          method: proof.method,
+          generatedAt: proof.generatedAt,
+          proof: proof.proof,
+          publicSignals: proof.publicSignals,
         })
-
-        console.log('Response status:', response.status, response.statusText)
-
-        if (response.ok) {
-          const result = await response.json()
-          console.log('✅ Proof stored in MongoDB:', result)
-        } else {
-          const error = await response.json().catch(() => ({ error: 'Unknown error' }))
-          console.error('❌ Failed to store proof:', response.status, error)
-        }
+        console.log('✅ Proof stored in MongoDB:', result)
       } catch (storageError) {
         console.error('❌ Error storing proof to MongoDB:', storageError)
         // Don't fail the whole flow if storage fails

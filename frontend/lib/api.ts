@@ -114,3 +114,19 @@ export async function getCurrentPrice(
     dollars: data.dollars
   }
 }
+
+// Store ZKID proof in backend
+export async function storeZkProof(proofData: any): Promise<any> {
+  const res = await fetch(`${API_URL}/zkid/proofs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(proofData)
+  })
+  
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => ({ error: 'Unknown error' }))
+    throw new Error(errorBody.error || `HTTP error! status: ${res.status}`)
+  }
+  
+  return res.json()
+}

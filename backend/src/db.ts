@@ -9,8 +9,6 @@ export async function getDb(): Promise<Db> {
     throw new Error("MONGODB_URI environment variable is required");
   }
 
-  const dbName = process.env.MONGODB_DB || "x402_zkid";
-
   if (!client) {
     if (!connectPromise) {
       const newClient = new MongoClient(uri);
@@ -19,6 +17,6 @@ export async function getDb(): Promise<Db> {
     client = await connectPromise;
   }
 
-  return client.db(dbName);
+  return client.db();
 }
 
