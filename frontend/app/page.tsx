@@ -138,7 +138,7 @@ export default function Home() {
       // Store proof in MongoDB Atlas (always try to store, even if verification fails for now)
       try {
         console.log('Attempting to store proof in MongoDB...')
-        const response = await fetch('http://localhost:3001/zkid/proofs', {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/zkid/proofs`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
