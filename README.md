@@ -14,7 +14,7 @@ An AI-powered payment system where your identity determines your price — but y
 
 ZK Payment Negotiator combines zero-knowledge proofs with the HTTP 402 payment protocol to enable privacy-preserving, identity-aware pricing.
 
-Users authenticate with Google and receive a zero-knowledge proof verifying their email domain (e.g., `@stanford.edu`, `@enterprise.com`) without exposing their actual email. This cryptographic proof feeds into an AI negotiation agent that dynamically prices content based on verified organizational affiliation: students get discounts, enterprises pay premium rates, partners unlock special deals.
+Users authenticate with Google and receive a zero-knowledge proof verifying their email domain (e.g., ``, `@enterprise.com`) without exposing their actual email. This cryptographic proof feeds into an AI negotiation agent that dynamically prices content based on verified organizational affiliation: students get discounts, enterprises pay premium rates, partners unlock special deals.
 
 When a price is agreed, payment settles instantly via the x402 protocol using USDC on Base.
 

@@ -6,7 +6,7 @@ export type Tier = "low" | "high" | "blocked";
 
 /**
  * Normalizes a raw input (domain or email) to a valid domain string.
- * Accepts either a domain ("stanford.edu") or a full email ("user@stanford.edu").
+ * Accepts either a domain ("thapar.edu") or a full email ("user@thapar.edu").
  * Returns null if the input cannot be normalized to a valid domain.
  */
 export function normalizeToDomain(raw: unknown): string | null {

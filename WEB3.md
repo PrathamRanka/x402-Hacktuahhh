@@ -56,10 +56,10 @@ This guide explains every technical term used in this project in simple, easy-to
 
 **Real-world example:**
 
-- **Normal proof:** "I'm a Stanford student, here's my student ID showing my name and photo"
-- **Zero-knowledge proof:** "I'm a Stanford student" (proven cryptographically, but you don't see my name or ID)
+- **Normal proof:** "I'm a thapar student, here's my student ID showing my name and photo"
+- **Zero-knowledge proof:** "I'm a thapar student" (proven cryptographically, but you don't see my name or ID)
 
-**In this project:** You prove you have a `@stanford.edu` email without revealing your actual email address.
+**In this project:** You prove you have a `@thapar.edu` email without revealing your actual email address.
 
 ### ZK Circuit
 
@@ -103,13 +103,13 @@ This guide explains every technical term used in this project in simple, easy-to
 
 **Example in this project:**
 
-- **Secret (hidden):** Your email `john.doe@stanford.edu`
+- **Secret (hidden):** Your email `john.doe@thapar.edu`
 - **Public signals (revealed):**
-  - `domainHash`: A cryptographic hash of `stanford.edu`
-  - `walletBinding`: Proof your wallet belongs to a Stanford email
+  - `domainHash`: A cryptographic hash of `thapar.edu`
+  - `walletBinding`: Proof your wallet belongs to a thapar email
   - `nullifier`: A unique ID to prevent reuse
 
-**Why useful:** The server sees you're from Stanford, but doesn't know who you are specifically.
+**Why useful:** The server sees you're from thapar, but doesn't know who you are specifically.
 
 ### Poseidon Hash
 
@@ -117,8 +117,8 @@ This guide explains every technical term used in this project in simple, easy-to
 
 **What's a hash?** A function that turns any input into a fixed-size random-looking output.
 
-- Input: `stanford.edu` → Output: `0x7a3f9b2e...` (always the same)
-- Input: `stanford.edu` (with one letter changed) → Completely different output
+- Input: `thapar.edu` → Output: `0x7a3f9b2e...` (always the same)
+- Input: `thapar.edu` (with one letter changed) → Completely different output
 
 **Why Poseidon:** Regular hash functions (like SHA-256) are slow in ZK circuits. Poseidon is designed to be fast in ZK proofs.
 
@@ -436,7 +436,7 @@ MONGODB_URI=mongodb+srv://...
 
 ### Domain Hash
 
-**What it is:** A cryptographic hash of your email domain (e.g., `stanford.edu`).
+**What it is:** A cryptographic hash of your email domain (e.g., `thapar.edu`).
 
 **Why hash it:** Hashing makes it impossible to reverse-engineer the original domain from the hash alone.
 
