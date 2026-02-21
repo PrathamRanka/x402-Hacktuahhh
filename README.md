@@ -3,7 +3,7 @@
 **Identity-aware payments, privacy-first.**
 
 
-An AI-powered payment system where your identity determines your price — but your identity stays private.
+An AI-powered payment system where your identity determines your price but your identity stays private.
 
 ![Architecture](architecture.png)
 
