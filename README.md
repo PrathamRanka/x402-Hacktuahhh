@@ -2,7 +2,6 @@
 
 **Identity-aware payments, privacy-first.**
 
-Jay Yu, Sophia Dew, Mahi Jariwala, Bek Hamit
 
 An AI-powered payment system where your identity determines your price — but your identity stays private.
 
