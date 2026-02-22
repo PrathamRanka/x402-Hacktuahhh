@@ -42,6 +42,7 @@ export default function Home() {
   const [copied, setCopied] = useState(false)
   const [balances, setBalances] = useState<Balances | null>(null)
   const [showFundModal, setShowFundModal] = useState(false)
+  const [showGuideModal, setShowGuideModal] = useState(false)
   const [guideContent, setGuideContent] = useState<{ title: string; markdown: string } | null>(null)
   const [isGeneratingGuide, setIsGeneratingGuide] = useState(false)
   const [credits, setCredits] = useState<{ balanceCents: number; balanceDollars: string } | null>(null)
@@ -55,7 +56,7 @@ export default function Home() {
 
   const { sendTransaction } = usePrivy()
 
-  const embeddedWallet = wallets.find((w) => w.walletClientType === 'privy')
+  const embeddedWallet = wallets.find((w: any) => w.walletClientType === 'privy')
 
   const copyWalletAddress = async () => {
     if (!embeddedWallet?.address) return
@@ -329,7 +330,7 @@ export default function Home() {
         body: JSON.stringify({
           walletAddress: embeddedWallet.address,
           amountCents,
-          txHash: txReceipt.transactionHash
+          txHash: (txReceipt as any).transactionHash || txReceipt.hash
         })
       });
 
