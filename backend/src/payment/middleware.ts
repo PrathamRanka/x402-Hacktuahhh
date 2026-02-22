@@ -17,7 +17,7 @@ export interface PaymentRequest extends Request {
 let cdpClient: CdpClient;
 let payToAddress: string | null = null;
 
-async function getPayTo(): Promise<string> {
+export async function getPayTo(): Promise<string> {
   if (payToAddress) return payToAddress;
   if (!cdpClient) {
     cdpClient = new CdpClient({

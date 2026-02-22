@@ -154,6 +154,17 @@ app.get('/api/wallet/credits/:walletAddress', async (req, res) => {
   res.json({ balanceCents: balance, balanceDollars: (balance / 100).toFixed(2) });
 });
 
+import { getPayTo } from './payment/middleware';
+
+app.get('/api/wallet/pay-to', async (req, res) => {
+  try {
+    const address = await getPayTo();
+    res.json({ address });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch deposit address' });
+  }
+});
+
 app.get('/api/wallet/history/:walletAddress', async (req, res) => {
   try {
     const txCol = await getCreditTransactionsCollection();

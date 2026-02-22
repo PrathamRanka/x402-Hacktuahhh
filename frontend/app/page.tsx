@@ -42,14 +42,18 @@ export default function Home() {
   const [copied, setCopied] = useState(false)
   const [balances, setBalances] = useState<Balances | null>(null)
   const [showFundModal, setShowFundModal] = useState(false)
-  const [showGuideModal, setShowGuideModal] = useState(false)
   const [guideContent, setGuideContent] = useState<{ title: string; markdown: string } | null>(null)
   const [isGeneratingGuide, setIsGeneratingGuide] = useState(false)
   const [credits, setCredits] = useState<{ balanceCents: number; balanceDollars: string } | null>(null)
   const [txHistory, setTxHistory] = useState<any[]>([])
   const [useCreditsFirst, setUseCreditsFirst] = useState(true)
   const [showHistoryModal, setShowHistoryModal] = useState(false)
+  const [depositAmount, setDepositAmount] = useState('5.00')
+  const [isDepositing, setIsDepositing] = useState(false)
+  const [depositStatus, setDepositStatus] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  const { sendTransaction } = usePrivy()
 
   const embeddedWallet = wallets.find((w) => w.walletClientType === 'privy')
 
@@ -270,6 +274,83 @@ export default function Home() {
       )
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const handleDeposit = async () => {
+    if (!embeddedWallet || !depositAmount) return;
+    setIsDepositing(true);
+    setDepositStatus('Fetching deposit address...');
+    
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      
+      // 1. Get Deposit Address from Backend
+      const payToRes = await fetch(`${API_URL}/api/wallet/pay-to`);
+      const { address: payToAddress } = await payToRes.json();
+      
+      if (!payToAddress) throw new Error("Could not fetch deposit address");
+
+      setDepositStatus('Please sign the transaction in your wallet...');
+
+      // 2. Send USDC transaction using Privy
+      const amountNum = parseFloat(depositAmount);
+      if (isNaN(amountNum) || amountNum <= 0) throw new Error("Invalid amount");
+      
+      const amountCents = Math.floor(amountNum * 100);
+      const amountWei = BigInt(amountNum * 1e6); // USDC is 6 decimals
+      
+      // Standard ERC20 Transfer ABI signature data for transfer(address,uint256)
+      // We manually construct the calldata for the USDC contract
+      const transferSelector = '0xa9059cbb'; // keccak256('transfer(address,uint256)').slice(0, 10)
+      const paddedAddress = payToAddress.replace('0x', '').padStart(64, '0');
+      const paddedAmount = amountWei.toString(16).padStart(64, '0');
+      const data = `${transferSelector}${paddedAddress}${paddedAmount}`;
+
+      // USDC Contract on Base Sepolia
+      const USDC_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+
+      const txReq = {
+        to: USDC_ADDRESS,
+        chainId: 84532,
+        data: data
+      };
+
+      const txReceipt = await sendTransaction(txReq);
+      
+      setDepositStatus('Transaction submitted! Minting credits...');
+      
+      // 3. Inform Backend to Mint
+      const fundRes = await fetch(`${API_URL}/api/wallet/fund`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          walletAddress: embeddedWallet.address,
+          amountCents,
+          txHash: txReceipt.transactionHash
+        })
+      });
+
+      if (fundRes.ok) {
+        setDepositStatus('Credits added successfully!');
+        fetchBalancesAndCredits();
+        setTimeout(() => {
+          setShowFundModal(false);
+          setDepositStatus('');
+          setDepositAmount('5.00');
+        }, 2000);
+      } else {
+        const err = await fundRes.json();
+        throw new Error(err.error || 'Failed to mint credits');
+      }
+
+    } catch (error: any) {
+      console.error('Deposit Error:', error);
+      setDepositStatus(`Failed: ${error.message || 'Unknown error'}`);
+    } finally {
+      setIsDepositing(false);
     }
   }
 
@@ -716,59 +797,53 @@ export default function Home() {
             </div>
             <div className="modal-body">
               <p className="modal-description">
-                Get testnet tokens on Base Sepolia to use the x402 payment system.
+                Purchase system credits directly using USDC on Base Sepolia. Credits are instantly available for use inside x402.
               </p>
 
-              <div className="fund-option">
-                <div className="fund-option-header">
-                  <span className="fund-token">ETH</span>
-                  <span className="fund-network">Base Sepolia</span>
+              <div className="fund-option" style={{ display: 'flex', flexDirection: 'column', gap: '16px', background: 'var(--bg-secondary)', padding: '20px', borderRadius: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ background: '#2775ca', color: 'white', fontWeight: 600, fontSize: '10px', padding: '4px 8px', borderRadius: '12px' }}>USDC</div>
+                    <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>Deposit Amount</span>
+                  </div>
+                  <div className="chain-badge">Base Sepolia</div>
                 </div>
-                <p className="fund-option-desc">Required for gas fees</p>
-                <a
-                  href={FAUCETS.eth}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="fund-link-btn"
+
+                <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                  <span style={{ fontSize: '24px', color: 'var(--text-secondary)', marginRight: '8px' }}>$</span>
+                  <input 
+                    type="number" 
+                    value={depositAmount} 
+                    onChange={e => setDepositAmount(e.target.value)}
+                    disabled={isDepositing}
+                    style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', fontSize: '24px', outline: 'none', width: '100%', fontWeight: 600 }}
+                  />
+                </div>
+
+                {depositStatus && <div style={{ fontSize: '12px', color: depositStatus.includes('Failed') ? 'red' : 'var(--primary)', fontWeight: 500 }}>{depositStatus}</div>}
+
+                <button 
+                  className="add-funds-btn" 
+                  onClick={handleDeposit}
+                  disabled={isDepositing}
+                  style={{ width: '100%', marginTop: '8px', opacity: isDepositing ? 0.7 : 1, cursor: isDepositing ? 'not-allowed' : 'pointer' }}
                 >
-                  Get ETH from Faucet
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                    <polyline points="15 3 21 3 21 9" />
-                    <line x1="10" y1="14" x2="21" y2="3" />
-                  </svg>
-                </a>
+                  {isDepositing ? 'Processing via Privy...' : 'Send USDC & Mint Credits'}
+                </button>
               </div>
 
-              <div className="fund-option">
-                <div className="fund-option-header">
-                  <span className="fund-token">USDC</span>
-                  <span className="fund-network">Base Sepolia</span>
-                </div>
-                <p className="fund-option-desc">Required for x402 payments</p>
-                <a
-                  href={FAUCETS.usdc}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="fund-link-btn"
-                >
-                  Get USDC from Circle Faucet
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                    <polyline points="15 3 21 3 21 9" />
-                    <line x1="10" y1="14" x2="21" y2="3" />
-                  </svg>
-                </a>
-              </div>
+              <div className="about-divider" style={{ margin: '24px 0', opacity: 0.1 }} />
+
+              <p className="modal-description" style={{ fontSize: '12px' }}>
+                Need test tokens? <a href={FAUCETS.usdc} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)' }}>Get USDC Faucet</a> or <a href={FAUCETS.eth} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)' }}>Get ETH Faucet</a>
+              </p>
 
               <div className="fund-wallet-info">
                 <span className="fund-wallet-label">Your wallet address:</span>
                 <code className="fund-wallet-address">{embeddedWallet?.address}</code>
                 <button className="copy-btn" onClick={copyWalletAddress}>
                   {copied ? (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>
                   ) : (
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
