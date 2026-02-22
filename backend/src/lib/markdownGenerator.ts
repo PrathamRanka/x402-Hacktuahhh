@@ -1,15 +1,18 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
+// Use same base model as negotiation layer
+const GEMINI_MODEL = 'models/gemini-2.5-flash-lite';
 
 export async function generateMarkdownGuide(topic: string): Promise<{ title: string; content: string }> {
-  const client = new Anthropic();
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY environment variable is not set.');
+  }
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 2000,
-    messages: [
-      {
-        role: 'user',
-        content: `Generate a comprehensive markdown guide about: "${topic}"
+  try {
+    const prompt = `Generate a comprehensive markdown guide about: "${topic}"
 
 Requirements:
 - Start with a title (# heading)
@@ -19,20 +22,25 @@ Requirements:
 - Keep it informative but concise (around 500-800 words)
 - Make it actually useful and educational
 
-Output ONLY the markdown content, nothing else.`
-      }
-    ]
-  });
+Output ONLY the markdown content, nothing else.`;
 
-  const textBlock = response.content.find(
-    (block): block is Anthropic.TextBlock => block.type === 'text'
-  );
+    const result = await model.generateContent(prompt);
+    let content = result.response.text();
+    
+    // Clean up markdown block wrapping if Gemini decides to include it
+    if (content.startsWith('\`\`\`markdown')) {
+      content = content.replace(/^\`\`\`markdown\n?/, '').replace(/\`\`\`\n?$/, '').trim();
+    } else if (content.startsWith('\`\`\`')) {
+      content = content.replace(/^\`\`\`\n?/, '').replace(/\`\`\`\n?$/, '').trim();
+    }
 
-  const content = textBlock?.text || `# ${topic}\n\nContent generation failed.`;
+    // Extract title from first heading
+    const titleMatch = content.match(/^#\s+(.+)$/m);
+    const title = titleMatch ? titleMatch[1] : topic;
 
-  // Extract title from first heading
-  const titleMatch = content.match(/^#\s+(.+)$/m);
-  const title = titleMatch ? titleMatch[1] : topic;
-
-  return { title, content };
+    return { title, content };
+  } catch (error) {
+    console.error('Failed to generate markdown guide with Gemini:', error);
+    return { title: topic, content: `# ${topic}\n\nContent generation failed.` };
+  }
 }
