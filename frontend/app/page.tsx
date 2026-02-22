@@ -4,7 +4,7 @@ import { usePrivy, useWallets } from '@privy-io/react-auth'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { generateZKProof, verifyZKProof, ProofData } from '@/lib/zkproof'
 import { sendChatStream, unlockData, getCurrentPrice as fetchPriceFromBackend, storeZkProof } from '@/lib/api'
-import { makePaymentRequest } from '@/lib/x402client'
+import { makePaymentRequest, createX402Fetch } from '@/lib/x402client'
 import { getBalances, Balances, FAUCETS } from '@/lib/balance'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -45,6 +45,10 @@ export default function Home() {
   const [showGuideModal, setShowGuideModal] = useState(false)
   const [guideContent, setGuideContent] = useState<{ title: string; markdown: string } | null>(null)
   const [isGeneratingGuide, setIsGeneratingGuide] = useState(false)
+  const [credits, setCredits] = useState<{ balanceCents: number; balanceDollars: string } | null>(null)
+  const [txHistory, setTxHistory] = useState<any[]>([])
+  const [useCreditsFirst, setUseCreditsFirst] = useState(true)
+  const [showHistoryModal, setShowHistoryModal] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const embeddedWallet = wallets.find((w) => w.walletClientType === 'privy')
@@ -56,24 +60,36 @@ export default function Home() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const fetchBalances = useCallback(async () => {
+  const fetchBalancesAndCredits = useCallback(async () => {
     if (!embeddedWallet?.address) return
     try {
       const bal = await getBalances(embeddedWallet.address)
       setBalances(bal)
+
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+      
+      const creditsRes = await fetch(`${API_URL}/api/wallet/credits/${embeddedWallet.address}`)
+      if (creditsRes.ok) {
+        setCredits(await creditsRes.json())
+      }
+
+      const historyRes = await fetch(`${API_URL}/api/wallet/history/${embeddedWallet.address}`)
+      if (historyRes.ok) {
+        setTxHistory(await historyRes.json())
+      }
     } catch (error) {
-      console.error('Failed to fetch balances:', error)
+      console.error('Failed to fetch balances or credits:', error)
     }
   }, [embeddedWallet?.address])
 
   useEffect(() => {
     if (embeddedWallet?.address) {
-      fetchBalances()
+      fetchBalancesAndCredits()
       // Refresh balances every 30 seconds
-      const interval = setInterval(fetchBalances, 30000)
+      const interval = setInterval(fetchBalancesAndCredits, 30000)
       return () => clearInterval(interval)
     }
-  }, [embeddedWallet?.address, fetchBalances])
+  }, [embeddedWallet?.address, fetchBalancesAndCredits])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -262,60 +278,44 @@ export default function Home() {
 
     setIsLoading(true)
     try {
-      // Use x402 payment flow with Privy wallet
-      const result = await makePaymentRequest(embeddedWallet, zkProof.domain)
+      const fetchWithPayment = await createX402Fetch(embeddedWallet)
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+      
+      const response = await fetchWithPayment(`${API_URL}/unlock`, {
+         method: 'POST',
+         headers: {
+           'Content-Type': 'application/json',
+           'X-Wallet-Address': embeddedWallet.address,
+           'X-Domain': zkProof.domain
+         },
+         body: JSON.stringify({ 
+           walletAddress: embeddedWallet.address,
+           domain: zkProof.domain,
+           useCreditsFirst
+         })
+      })
 
-      if (result.success && result.data) {
-        const responseData = result.data as {
-          data?: { timestamp?: string }
-          message?: string
-          settlement?: Settlement
-        }
-
-        console.log('[Payment] Settlement response:', responseData.settlement)
-
-        // Update message to show payment success
+      const result = await response.json()
+      
+      if (response.ok && result.success) {
         setMessages((prev) => prev.map((msg, i) =>
-          i === messageIndex
-            ? {
-                ...msg,
-                unlocked: true,
-                settlement: responseData.settlement
-              }
-            : msg
+          i === messageIndex ? { ...msg, unlocked: true, settlement: result.settlement } : msg
         ))
         setCurrentPrice(null)
+        fetchBalancesAndCredits()
 
-        // Refresh balances after successful payment
-        fetchBalances()
-
-        // Now generate the guide
         setIsGeneratingGuide(true)
-        try {
-          console.log('[Guide] Starting guide generation...')
-          const guideResult = await unlockData(embeddedWallet.address)
-          console.log('[Guide] Result:', guideResult)
-          if (guideResult.success && guideResult.markdown) {
-            setGuideContent({
-              title: guideResult.title || 'Your Guide',
-              markdown: guideResult.markdown
-            })
-            setShowGuideModal(true)
-          } else {
-            console.error('[Guide] Generation failed:', guideResult.error || 'No markdown returned')
-          }
-        } catch (guideError) {
-          console.error('[Guide] Exception:', guideError)
-        } finally {
-          setIsGeneratingGuide(false)
+        if (result.markdown) {
+           setGuideContent({
+             title: result.title || 'Your Guide',
+             markdown: result.markdown
+           })
+           setShowGuideModal(true)
         }
+        setIsGeneratingGuide(false)
       } else {
-        console.error('Payment failed:', result.error)
-        // Show error to user
         setMessages((prev) => prev.map((msg, i) =>
-          i === messageIndex
-            ? { ...msg, content: msg.content + `\n\nPayment error: ${result.error}` }
-            : msg
+          i === messageIndex ? { ...msg, content: msg.content + `\n\nPayment error: ${result.error || 'Failed'}` } : msg
         ))
       }
     } catch (error) {
@@ -459,7 +459,7 @@ export default function Home() {
         <div className="balance-card">
           <div className="balance-header">
             <span className="balance-label">Balance</span>
-            <button className="refresh-btn" onClick={fetchBalances} title="Refresh">
+            <button className="refresh-btn" onClick={fetchBalancesAndCredits} title="Refresh">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M23 4v6h-6M1 20v-6h6" />
                 <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
@@ -480,7 +480,46 @@ export default function Home() {
           ) : (
             <div className="balance-loading">Loading...</div>
           )}
-          <button className="add-funds-btn" onClick={() => setShowFundModal(true)}>
+          <div className="about-divider" style={{ margin: '12px 0', opacity: 0.1 }} />
+          <div className="balance-header">
+            <span className="balance-label">System Credits</span>
+            <button className="refresh-btn" onClick={() => setShowHistoryModal(true)} title="History">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+            </button>
+          </div>
+          {credits ? (
+             <div className="balance-amounts">
+               <div className="balance-row">
+                 <span className="balance-token">Credits</span>
+                 <span className="balance-value">${credits.balanceDollars}</span>
+               </div>
+             </div>
+          ) : (
+            <div className="balance-loading">Loading...</div>
+          )}
+          
+          <div className="toggle-row" style={{ marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '13px' }}>
+            <span style={{ color: 'var(--text-secondary)' }}>Use Credits First</span>
+            <label className="switch" style={{ position: 'relative', display: 'inline-block', width: '34px', height: '20px' }}>
+              <input type="checkbox" checked={useCreditsFirst} onChange={e => setUseCreditsFirst(e.target.checked)} style={{ opacity: 0, width: 0, height: 0 }} />
+              <span className="slider round" style={{ 
+                position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0, 
+                backgroundColor: useCreditsFirst ? 'var(--primary)' : 'var(--bg-tertiary)', 
+                transition: '.4s', borderRadius: '34px' 
+              }}>
+                <span style={{
+                  position: 'absolute', content: '""', height: '16px', width: '16px', left: '2px', bottom: '2px',
+                  backgroundColor: 'white', transition: '.4s', borderRadius: '50%',
+                  transform: useCreditsFirst ? 'translateX(14px)' : 'translateX(0)'
+                }} />
+              </span>
+            </label>
+          </div>
+
+          <button className="add-funds-btn" onClick={() => setShowFundModal(true)} style={{ marginTop: '12px' }}>
             Add Funds
           </button>
         </div>
@@ -760,6 +799,46 @@ export default function Home() {
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {guideContent.markdown}
               </ReactMarkdown>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* History Modal */}
+      {showHistoryModal && (
+        <div className="modal-overlay" onClick={() => setShowHistoryModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Transaction History</h3>
+              <button className="modal-close" onClick={() => setShowHistoryModal(false)}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+              {txHistory.length === 0 ? (
+                <p className="modal-description">No recent transactions found.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {txHistory.map((tx: any, i: number) => (
+                    <div key={tx.id || i} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px', background: 'var(--bg-secondary)', borderRadius: '8px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <span style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>{tx.type}</span>
+                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{new Date(tx.createdAt).toLocaleString()}</span>
+                        {tx.txHash && <span style={{ fontSize: '11px', color: 'var(--primary)', fontFamily: 'monospace' }}>{tx.txHash.slice(0, 10)}...</span>}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center' }}>
+                        <span style={{ fontWeight: 600, color: tx.amount < 0 ? 'var(--text-primary)' : '#4ade80' }}>
+                          {tx.amount > 0 ? '+' : ''}{(tx.amount / 100).toFixed(2)} USDC
+                        </span>
+                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{tx.status}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
